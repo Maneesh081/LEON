@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LEON Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">LEON</span>
+    <span class="sub">Learning &amp; Explaining Offensive-Network Patterns</span>
+  </div>
+  <div class="status">
+    <span id="conn" class="dot off"></span>
+    <span id="connText">connecting…</span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="live">Live</button>
+  <button class="tab" data-tab="models">Models</button>
+  <button class="tab" data-tab="dataset">Dataset</button>
+  <button class="tab" data-tab="blocks">Blocks &amp; Logs</button>
+</nav>
+
+<main>
+  <!-- ============ LIVE ============ -->
+  <section id="tab-live" class="panel active">
+    <div class="cards">
+      <div class="card"><div class="card-num" id="cFlows">0</div><div class="card-label">flows</div></div>
+      <div class="card"><div class="card-num" id="cAlerts">0</div><div class="card-label">alerts</div></div>
+      <div class="card"><div class="card-num" id="cBlocks">0</div><div class="card-label">blocked</div></div>
+      <div class="card"><div class="card-num" id="cProbes">0</div><div class="card-label">honeypot probes</div></div>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Cumulative alerts &amp; blocks</div>
+      <div class="chart-body"><canvas id="trend"></canvas></div>
+    </div>
+    <div class="feed-head">Live flow verdicts</div>
+    <table class="feed" id="feed">
+      <thead>
+        <tr>
+          <th>time</th><th>proto</th><th>source → destination</th>
+          <th>label</th><th>conf</th><th>novelty</th><th>action</th><th>reason</th><th>why (SHAP)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- ============ MODELS ============ -->
+  <section id="tab-models" class="panel">
+    <div id="modelsError" class="muted"></div>
+    <div id="winnerBadge" class="badge hidden"></div>
+    <div class="models-grid">
+      <div class="chart-wrap"><div class="chart-title">Overall scores</div><div class="chart-body"><canvas id="modelsChart"></canvas></div></div>
+      <div class="chart-wrap"><div class="chart-title">Winner per-class</div><div class="chart-body"><canvas id="perClassChart"></canvas></div></div>
+    </div>
+    <div class="chart-wrap"><div class="chart-title">Operational rates</div><div class="chart-body"><canvas id="opsChart"></canvas></div></div>
+    <div class="feed-head">Comparison report</div>
+    <table class="feed" id="modelsTable">
+      <thead>
+        <tr>
+          <th>model</th><th>kind</th><th>accuracy</th><th>macro F1</th><th>wt F1</th>
+          <th>benign FAR</th><th>attack recall</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- ============ DATASET ============ -->
+  <section id="tab-dataset" class="panel">
+    <div id="datasetError" class="muted"></div>
+    <div class="cards">
+      <div class="card"><div class="card-num" id="dRows">—</div><div class="card-label">total rows</div></div>
+      <div class="card"><div class="card-num" id="dFiles">—</div><div class="card-label">CICIDS-2017 files</div></div>
+      <div class="card"><div class="card-num" id="dBn">—</div><div class="card-label">BENIGN</div></div>
+      <div class="card"><div class="card-num" id="dAn">—</div><div class="card-label">ANOMALY</div></div>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Class distribution</div>
+      <div class="chart-body"><canvas id="classChart"></canvas></div>
+    </div>
+    <div class="feed-head">Training files <span class="muted">(model/data/cleaned)</span></div>
+    <table class="feed" id="fileTable">
+      <thead><tr><th>file</th><th>rows</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="feed-head">Sample rows <span class="muted">(the 11 features LEON trains on)</span></div>
+    <table class="feed" id="datasetTable">
+      <thead></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- ============ BLOCKS & LOGS ============ -->
+  <section id="tab-blocks" class="panel">
+    <div class="two-col">
+      <div>
+        <div class="feed-head">Blocked IPs <button id="refreshBlocks" class="mini">refresh</button></div>
+        <ul id="blockList" class="list"></ul>
+      </div>
+      <div>
+        <div class="feed-head">Honeypot probes</div>
+        <table class="feed" id="probeTable">
+          <thead><tr><th>time</th><th>attacker</th><th>port</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="feed-head">Recent events <span class="muted">(from logs/events.jsonl)</span></div>
+    <pre id="eventLog" class="log"></pre>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

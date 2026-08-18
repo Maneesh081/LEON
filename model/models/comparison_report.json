@@ -1,0 +1,89 @@
+{
+  "per_class_cap": 40000,
+  "seed": 42,
+  "quick": false,
+  "train": 316033,
+  "valid": 67722,
+  "test": 67722,
+  "classes": [
+    "BENIGN",
+    "ANOMALY"
+  ],
+  "results": {
+    "RandomForest": {
+      "kind": "supervised",
+      "accuracy": 0.9916275361034819,
+      "macro_f1": 0.9899072855636526,
+      "weighted_f1": 0.9916471634121198,
+      "threshold": 0.5,
+      "benign_false_alert_rate": 0.009229166666666667,
+      "attack_alert_recall": 0.9937126052124531,
+      "safe_flow_rate": 0.9907708333333334,
+      "attack_alert_precision": 0.9778953146050596,
+      "per_class": {
+        "ANOMALY": {
+          "precision": 0.9778953146050596,
+          "recall": 0.9937126052124531,
+          "f1": 0.9857405125367804,
+          "support": 19722
+        },
+        "BENIGN": {
+          "precision": 0.9973993834021937,
+          "recall": 0.9907708333333334,
+          "f1": 0.9940740585905248,
+          "support": 48000
+        }
+      }
+    },
+    "XGBoost": {
+      "kind": "supervised",
+      "accuracy": 0.9913322110983137,
+      "macro_f1": 0.9895678090001976,
+      "weighted_f1": 0.9913592621807128,
+      "threshold": 0.5,
+      "benign_false_alert_rate": 0.0105625,
+      "attack_alert_recall": 0.9959436162660987,
+      "safe_flow_rate": 0.9894375,
+      "attack_alert_precision": 0.9748374609161745,
+      "per_class": {
+        "ANOMALY": {
+          "precision": 0.9748374609161745,
+          "recall": 0.9959436162660987,
+          "f1": 0.9852775200020065,
+          "support": 19722
+        },
+        "BENIGN": {
+          "precision": 0.9983183738675299,
+          "recall": 0.9894375,
+          "f1": 0.9938580979983886,
+          "support": 48000
+        }
+      }
+    },
+    "IsolationForest": {
+      "kind": "novelty",
+      "accuracy": 0.7014116535247039,
+      "macro_f1": 0.4127794026135204,
+      "weighted_f1": 0.5846857778797738,
+      "threshold": -0.16207866414385985,
+      "benign_false_alert_rate": 0.010625,
+      "attack_alert_recall": 0.0005577527634114187,
+      "safe_flow_rate": 0.989375,
+      "attack_alert_precision": 0.02111324376199616,
+      "per_class": {
+        "ANOMALY": {
+          "precision": 0.02111324376199616,
+          "recall": 0.0005577527634114187,
+          "f1": 0.001086795435459171,
+          "support": 19722
+        },
+        "BENIGN": {
+          "precision": 0.7066859124120177,
+          "recall": 0.989375,
+          "f1": 0.8244720097915816,
+          "support": 48000
+        }
+      }
+    }
+  }
+}

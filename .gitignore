@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+logs/
+prevention/blocks.json
+model/data/
+.DS_Store
+*.swp
+*.swo
+*~
+.env
