@@ -84,6 +84,31 @@
           "support": 48000
         }
       }
+    },
+    "OneClassSVM": {
+      "kind": "novelty",
+      "accuracy": 0.7016331472785801,
+      "macro_f1": 0.41232926638782347,
+      "weighted_f1": 0.584501485089499,
+      "threshold": -4.6514789298577475e-06,
+      "benign_false_alert_rate": 0.010083333333333333,
+      "attack_alert_recall": 0.0,
+      "safe_flow_rate": 0.9899166666666667,
+      "attack_alert_precision": 0.0,
+      "per_class": {
+        "ANOMALY": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 19722
+        },
+        "BENIGN": {
+          "precision": 0.7066837205151849,
+          "recall": 0.9899166666666667,
+          "f1": 0.8246585327756469,
+          "support": 48000
+        }
+      }
     }
   }
 }

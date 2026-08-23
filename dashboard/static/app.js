@@ -140,7 +140,7 @@ function renderProbes() {
     .join("") || '<tr><td colspan="3" class="muted">no probes yet</td></tr>';
 }
 
-/* ---------- trend charts (cumulative lines + per-minute histogram) ---------- */
+/* ---------- trend chart (cumulative lines) ---------- */
 function renderTrend() {
   const decisions = state.events.filter((e) => e.type === "decision").slice(-60);
   if (!state.trend) {
@@ -182,43 +182,56 @@ async function loadModels() {
   const results = data.results || {};
   const names = Object.keys(results);
 
-  const winner = names.find((n) => results[n].kind === "supervised");
   const top = names.filter((n) => results[n].kind === "supervised")
     .sort((x, y) => results[y].macro_f1 - results[x].macro_f1)[0];
   $("winnerBadge").classList.remove("hidden");
   $("winnerBadge").textContent = `Winner: ${top} (macroF1 ${results[top].macro_f1.toFixed(4)}) · live artifact: model/models/best_model.joblib`;
 
+  function kindBadge(kind) {
+    const cls = kind === "supervised" ? "badge-sup" : "badge-nov";
+    return `<span class="pill ${cls}">${kind}</span>`;
+  }
+
   const tbody = $("modelsTable").querySelector("tbody");
   tbody.innerHTML = names.map((n) => {
     const m = results[n];
-    return `<tr>
-      <td>${n}${n === top ? " 🏆" : ""}</td>
-      <td>${m.kind}</td>
+    const isWinner = n === top;
+    return `<tr class="${isWinner ? "winner-row" : ""}">
+      <td>${n}${isWinner ? ' <span class="trophy">🏆</span>' : ""}</td>
+      <td>${kindBadge(m.kind)}</td>
       <td>${m.accuracy.toFixed(4)}</td>
-      <td>${m.macro_f1.toFixed(4)}</td>
+      <td class="f1-cell">${m.macro_f1.toFixed(4)}</td>
       <td>${m.weighted_f1.toFixed(4)}</td>
       <td>${(m.benign_false_alert_rate * 100).toFixed(2)}%</td>
       <td>${(m.attack_alert_recall * 100).toFixed(2)}%</td>
     </tr>`;
   }).join("");
 
-  const gridColors = ["#58a6ff", "#3fb950", "#d29922"];
+  const barColors = names.map((n) => {
+    if (n === top) return "#3fb950";
+    if (results[n].kind === "supervised") return "#58a6ff";
+    return "#d29922";
+  });
+
   if (!state.modelsChart) {
     state.modelsChart = new Chart($("modelsChart"), {
       type: "bar",
       data: {
         labels: names,
         datasets: [
-          { label: "accuracy", data: names.map((n) => results[n].accuracy), backgroundColor: gridColors },
-          { label: "macro F1", data: names.map((n) => results[n].macro_f1), backgroundColor: gridColors.map((c) => c + "99") },
-          { label: "weighted F1", data: names.map((n) => results[n].weighted_f1), backgroundColor: gridColors.map((c) => c + "55") },
+          { label: "accuracy", data: names.map((n) => results[n].accuracy), backgroundColor: barColors, borderRadius: 4 },
+          { label: "macro F1", data: names.map((n) => results[n].macro_f1), backgroundColor: barColors.map((c) => c + "99"), borderRadius: 4 },
+          { label: "weighted F1", data: names.map((n) => results[n].weighted_f1), backgroundColor: barColors.map((c) => c + "55"), borderRadius: 4 },
         ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: "#8b949e" } } },
-        scales: { x: { ticks: { color: "#8b949e" } }, y: { beginAtZero: true, max: 1, ticks: { color: "#8b949e" } } },
+        plugins: { legend: { labels: { color: "#8b949e", usePointStyle: true, boxWidth: 10 } } },
+        scales: {
+          x: { ticks: { color: "#8b949e" }, grid: { display: false } },
+          y: { beginAtZero: true, max: 1, ticks: { color: "#8b949e" }, grid: { color: "rgba(45,51,59,.5)" } },
+        },
       },
     });
   } else {
@@ -226,6 +239,9 @@ async function loadModels() {
     state.modelsChart.data.datasets[0].data = names.map((n) => results[n].accuracy);
     state.modelsChart.data.datasets[1].data = names.map((n) => results[n].macro_f1);
     state.modelsChart.data.datasets[2].data = names.map((n) => results[n].weighted_f1);
+    state.modelsChart.data.datasets[0].backgroundColor = barColors;
+    state.modelsChart.data.datasets[1].backgroundColor = barColors.map((c) => c + "99");
+    state.modelsChart.data.datasets[2].backgroundColor = barColors.map((c) => c + "55");
     state.modelsChart.update();
   }
 
@@ -238,16 +254,16 @@ async function loadModels() {
       data: {
         labels: classes,
         datasets: [
-          { label: "precision", data: metricOf("precision"), backgroundColor: "#58a6ff" },
-          { label: "recall", data: metricOf("recall"), backgroundColor: "#3fb950" },
-          { label: "F1", data: metricOf("f1"), backgroundColor: "#d29922" },
+          { label: "precision", data: metricOf("precision"), backgroundColor: "#58a6ff", borderRadius: 4 },
+          { label: "recall", data: metricOf("recall"), backgroundColor: "#3fb950", borderRadius: 4 },
+          { label: "F1", data: metricOf("f1"), backgroundColor: "#d29922", borderRadius: 4 },
         ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: "#8b949e" } }, title: { display: true, text: `${top} per-class scores`, color: "#8b949e" } },
-        scales: { x: { ticks: { color: "#8b949e" } }, y: { beginAtZero: true, max: 1, ticks: { color: "#8b949e" } } },
+        plugins: { legend: { labels: { color: "#8b949e", usePointStyle: true, boxWidth: 10 } }, title: { display: true, text: `${top} per-class scores`, color: "#8b949e" } },
+        scales: { x: { ticks: { color: "#8b949e" }, grid: { display: false } }, y: { beginAtZero: true, max: 1, ticks: { color: "#8b949e" }, grid: { color: "rgba(45,51,59,.5)" } } },
       },
     });
   } else {
@@ -257,6 +273,7 @@ async function loadModels() {
   }
 
   const ops = ["benign_false_alert_rate", "attack_alert_recall", "safe_flow_rate"];
+  const opsColors = ["#f85149", "#3fb950", "#58a6ff"];
   if (!state.opsChart) {
     state.opsChart = new Chart($("opsChart"), {
       type: "bar",
@@ -265,7 +282,8 @@ async function loadModels() {
         datasets: [{
           label: top,
           data: ops.map((o) => topModel[o] != null ? topModel[o] : 0),
-          backgroundColor: gridColors,
+          backgroundColor: opsColors,
+          borderRadius: 4,
         }],
       },
       options: {
@@ -273,7 +291,7 @@ async function loadModels() {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, title: { display: true, text: "operational rates", color: "#8b949e" } },
-        scales: { x: { beginAtZero: true, max: 1, ticks: { color: "#8b949e" } }, y: { ticks: { color: "#8b949e" } } },
+        scales: { x: { beginAtZero: true, max: 1, ticks: { color: "#8b949e" }, grid: { color: "rgba(45,51,59,.5)" } }, y: { ticks: { color: "#8b949e" }, grid: { display: false } } },
       },
     });
   } else {

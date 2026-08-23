@@ -1,9 +1,9 @@
 # LEON — How the Models Work (L4 + L5)
 
 Plain-English walkthrough of the machine-learning layer: what the models are,
-how the code trains and evaluates them, what the saved files (artifacts) are,
-and how a live verdict gets explained. Read this when you forget how a piece
-fits together.
+how the code trains and evaluates them (four models compared), what the saved
+files (artifacts) are, and how a live verdict gets explained. Read this when you
+forget how a piece fits together.
 
 ---
 
@@ -67,16 +67,20 @@ Runs once per training session. Four stages.
             └─ 50% test   (final exam, never seen during training)
 ```
 
-### 3d. Train three models on the SAME split
+### 3d. Train four models on the SAME split
 
 | Model | Kind | How it learns |
 |-------|------|---------------|
 | RandomForest (`rf`) | supervised | 400 decision trees vote; `balanced_subsample` upweights attacks |
 | XGBoost (`xgb_model`) | supervised | boosting: each tree fixes the previous one's mistakes; `scale_pos_weight` compensates the rare class; early-stop 20 rounds |
+| OneClassSVM (`svm`) | novelty | SGD-based SVM trained on **BENIGN only**; learns what normal looks like, flags deviations |
 | IsolationForest (`iso`) | unsupervised | trained on **BENIGN only**; measures how "strange" a flow is vs normal traffic |
 
 RandomForest and XGBoost are wrapped in sklearn `Pipeline`s so the exact same
 preprocessing (imputer + StandardScaler) runs at train and predict time.
+OneClassSVM and IsolationForest also get the same preprocessing but are fitted
+on BENIGN data only — they answer "how normal is this?" rather than "which
+class does this belong to?"
 
 ### 3e. Honest evaluation on the test set
 
@@ -98,7 +102,8 @@ preprocessing (imputer + StandardScaler) runs at train and predict time.
 
 ### `comparison_report.json`
 A JSON dump of every metric in section 3e, plus split sizes, seed, and cap.
-This is the "report card" of the training run.
+Covers all four models (RF, XGBoost, OneClassSVM, IsolationForest). This is
+the "report card" of the training run.
 
 ### `best_model.joblib`
 Python's serialized dictionary (like a save-game). Keys:
@@ -207,16 +212,24 @@ key drivers: total_bwd_bytes=+0.286, dst_port=+0.129, protocol=+0.055, total_fwd
 ## 7. Real numbers from the current trained model
 
 ```
-RandomForest    supervised  acc=0.9916  macroF1=0.9899  benignFAR=0.0092  attackRec=0.9937
-XGBoost         supervised  acc=0.9913  macroF1=0.9896  benignFAR=0.0106  attackRec=0.9959
-IsolationForest novelty     acc=0.7014  macroF1=0.4128  benignFAR=0.0106  attackRec=0.0006
+RandomForest     supervised  acc=0.9916  macroF1=0.9899  benignFAR=0.0092  attackRec=0.9937
+XGBoost          supervised  acc=0.9913  macroF1=0.9896  benignFAR=0.0106  attackRec=0.9959
+OneClassSVM      novelty     acc=~       macroF1=~       benignFAR=~       attackRec=~       (see dashboard after retrain)
+IsolationForest  novelty     acc=0.7014  macroF1=0.4128  benignFAR=0.0106  attackRec=0.0006
 ```
 
 - **RandomForest** won (best macroF1) → live artifact.
 - XGBoost essentially tied (slightly better attack recall).
+- **OneClassSVM** is another novelty detector (like IsolationForest) trained on
+  BENIGN only. It uses a linear SVM with SGD training — fast, memory-efficient.
+  It provides a second opinion on "is this flow normal?" and is shown alongside
+  the other models for comparison. Run `./train_compare.sh` to see its actual
+  numbers in the dashboard.
 - IsolationForest looks "bad" as a classifier because that is NOT its job. It
   never sees attacks during training; it flags *unusual* traffic. Its ~1%
-  benign-false-alert rate is a deliberate, tunable safety-net budget.
+  benign-false-alert rate is a deliberate, tunable safety-net budget. OneClassSVM
+  serves the same role via a different algorithm — comparing both gives you
+  confidence that the novelty-detection approach is robust regardless of method.
 
 ---
 
@@ -224,7 +237,7 @@ IsolationForest novelty     acc=0.7014  macroF1=0.4128  benignFAR=0.0106  attack
 
 | File | Role |
 |------|------|
-| `model/train_compare.py` | train + compare + save artifacts |
+| `model/train_compare.py` | train + compare (RF, XGBoost, OneClassSVM, IF) + save artifacts |
 | `model/model.py` | `FlowClassifier` live adapter |
 | `model/explain.py` | `FlowExplainer` SHAP reasons (L5) |
 | `model/run_model.py` | CLI: `--features`, `--jsonl`, `--live`, `--explain` |

@@ -1,12 +1,13 @@
-"""Train RandomForest, XGBoost and IsolationForest on the same data and compare.
+"""Train RandomForest, XGBoost, OneClassSVM and IsolationForest on the same data and compare.
 
 Binary anomaly detection: BENIGN vs ANOMALY, using the exact 11-feature
-contract produced by the LEON sensor (sensor/extractor.py). All three models
+contract produced by the LEON sensor (sensor/extractor.py). All four models
 are evaluated on the identical 70/15/15 stratified split.
 
-  - RandomForest  : supervised classifier
-  - XGBoost       : supervised classifier (gradient boosting)
-  - IsolationForest : unsupervised novelty detector (trained on BENIGN only)
+  - RandomForest     : supervised classifier
+  - XGBoost          : supervised classifier (gradient boosting)
+  - OneClassSVM      : novelty detector (SGD-based, trained on BENIGN only)
+  - IsolationForest  : unsupervised novelty detector (trained on BENIGN only)
 
 The comparison report (model/comparison_report.json) reports accuracy,
 macro/weighted F1, per-class precision/recall, benign false-alert rate and
@@ -25,6 +26,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest, RandomForestClassifier
+from sklearn.linear_model import SGDOneClassSVM
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -157,6 +159,14 @@ def run() -> None:
         iso.decision_function(iso_pre.transform(benign_valid)), 0.01))
     print(f"IsolationForest done (anomaly threshold {iso_threshold:.5f})\n")
 
+    svm_pre = Pipeline([("imputer", SimpleImputer(strategy="median")),
+                         ("scale", StandardScaler())])
+    svm_train = svm_pre.fit_transform(benign_train)
+    svm = SGDOneClassSVM(nu=0.05, max_iter=1000, random_state=args.seed).fit(svm_train)
+    svm_threshold = float(np.quantile(
+        svm.decision_function(svm_pre.transform(benign_valid)), 0.01))
+    print(f"OneClassSVM done (anomaly threshold {svm_threshold:.5f})\n")
+
     results: dict[str, dict] = {}
 
     def supervised(name, pipe, threshold):
@@ -203,6 +213,24 @@ def run() -> None:
                       for k, v in report.items() if k in {BENIGN, ANOMALY}},
     }
     print(f"  {'IsolationForest':18s} acc={iso_acc:.4f} macroF1={iso_macro:.4f} weightedF1={iso_weighted:.4f}")
+
+    print("Evaluating OneClassSVM (novelty) on held-out test…")
+    svm_scores = svm.decision_function(svm_pre.transform(X_test))
+    svm_labels = np.where(svm_scores < svm_threshold, ANOMALY, BENIGN)
+    svm_conf = np.where(svm_labels == ANOMALY, np.clip((svm_threshold - svm_scores) / abs(svm_threshold), 0.0, 1.0), 1.0)
+    svm_acc = float(accuracy_score(y_test_arr, svm_labels))
+    svm_macro = float(f1_score(y_test_arr, svm_labels, average="macro", zero_division=0))
+    svm_weighted = float(f1_score(y_test_arr, svm_labels, average="weighted", zero_division=0))
+    report = classification_report(y_test_arr, svm_labels, output_dict=True, zero_division=0)
+    alert_stats, _ = decide(y_test_arr, svm_labels, svm_conf, 0.0)
+    results["OneClassSVM"] = {
+        "kind": "novelty", "accuracy": svm_acc, "macro_f1": svm_macro,
+        "weighted_f1": svm_weighted, "threshold": svm_threshold, **alert_stats,
+        "per_class": {k: {"precision": v["precision"], "recall": v["recall"],
+                          "f1": v["f1-score"], "support": int(v["support"])}
+                      for k, v in report.items() if k in {BENIGN, ANOMALY}},
+    }
+    print(f"  {'OneClassSVM':18s} acc={svm_acc:.4f} macroF1={svm_macro:.4f} weightedF1={svm_weighted:.4f}")
 
     report_data = {
         "per_class_cap": args.per_class, "seed": args.seed, "quick": args.quick,
