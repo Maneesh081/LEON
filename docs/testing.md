@@ -29,8 +29,11 @@ Open **3 terminals**.
 **Terminal 1 — IPS (detect mode, no blocking yet):**
 ```bash
 cd ~/Projects/LEON
-sudo .venv/bin/python -m prevention.run_ips --live -i wlan0 -d 180 --honeypot
+sudo .venv/bin/python -m prevention.run_ips --live -d 300 --honeypot
 ```
+
+Note: no `-i wlan0` — LEON captures on **all interfaces** (lo + wlan0) so it
+sees same-machine DDoS traffic on loopback.
 
 Wait until you see:
 ```
@@ -75,10 +78,12 @@ The `nc` command connects to port 2323 (a dead port with no real service).
 
 **In Terminal 1 (IPS), you should see:**
 ```
-[HONEYPOT] probe from 10.200.130.91 → ALLOW: whitelisted host - never blocked
+[HONEYPOT] probe from 10.200.130.91 -> BLOCK: honeypot probe - no real service should be contacted
 ```
 
-The honeypot detected the probe. Since the source is localhost (same machine), it's whitelisted — but in production, this would be BLOCK.
+The honeypot detected the probe. The source is your wlan0 IP (not 127.0.0.1),
+so it is NOT whitelisted and gets BLOCKED. In detect mode, no nftables rule is
+created — just logged. In prevent mode, the IP would be immediately blocked.
 
 **What to say:** "The honeypot is a decoy listener on port 2323. Nobody has a legitimate reason to connect here. The moment nc touches it, LEON detects a probe. In production with --prevent, the attacker's IP would be instantly blocked at the kernel level."
 
@@ -92,53 +97,67 @@ Now restart the IPS with **prevent mode** enabled. Ctrl+C Terminal 1, then:
 
 **Terminal 1 — IPS (prevent mode):**
 ```bash
-sudo .venv/bin/python -m prevention.run_ips --live -i wlan0 -d 180 --prevent --honeypot
+sudo .venv/bin/python -m prevention.run_ips --live -d 300 --prevent --honeypot
 ```
 
 Wait until you see `prevent mode: nftables active` and flows scrolling.
 
-**Terminal 3 — Run the DDoS attack:**
+**Terminal 3 — Run the DDoS attack (same machine):**
 ```bash
-sudo .venv/bin/python3 scripts/ddos_flood.py --target 10.200.130.91 --src 10.200.130.99 --port 80 --count 2000 --rate 500
+sudo .venv/bin/python3 scripts/ddos_flood.py --src 10.200.130.91 --target 10.200.130.91 --port 80 --count 500 --rate 100
 ```
+
+Note: `--src` is your own IP. The script detects same-machine and sends on loopback.
+LEON sees the flood on lo, classifies ANOMALY, blocks your IP. Internet stays up
+because the nftables rule only drops incoming packets FROM your IP — responses from
+the gateway come FROM `10.200.130.1`, not your IP.
 
 You'll see:
 ```
-SYN flood: 2000 packets -> 10.200.130.91:80
-  spoofed src=10.200.130.99  rate=500 pps  duration=~4s
-  [  0.5s] sent 500/2000 packets
-  [  1.0s] sent 1000/2000 packets
-  [  1.5s] sent 1500/2000 packets
-  [  2.0s] sent 2000/2000 packets
+SYN flood: 500 packets -> 10.200.130.91:80
+  src=10.200.130.91  rate=100 pps  duration=~5s
+  mode: same-machine (loopback)
+  NOTE: run LEON without -i to capture on lo: sudo .venv/bin/python -m prevention.run_ips --live -d 300 --prevent --honeypot
 
-Done. 2000 packets sent in 2.0s
+  [  0.5s] sent 50/500 packets
+  [  1.0s] sent 100/500 packets
+  ...
+  [  5.0s] sent 500/500 packets
+
+Done. 500 packets sent in 5.0s
 ```
 
 **In Terminal 1 (IPS), you should see:**
 ```
-[BLOCK ] src=10.200.130.99  label=ANOMALY  conf=0.9987  reason=known attack (confidence 0.99 >= 0.90)
-      flow TCP 10.200.130.99:xxxxx -> 10.200.130.91:80  fwd=500p/30000B bwd=0p/0B  syn=500 ack=0 ...
+[BLOCK ] src=10.200.130.91  label=ANOMALY  conf=0.9987  reason=known attack (confidence 0.99 >= 0.90)
+      flow TCP 10.200.130.91:xxxxx -> 10.200.130.91:80  fwd=500p/30000B bwd=0p/0B  syn=500 ack=0 ...
       action: block - known attack (confidence 0.99 >= 0.90)
       why: SYN flags=500 → ATTACK-like (strong) · speed=1000 → ATTACK-like (strong)
 ```
 
-**What to say:** "The RandomForest model classified this as ANOMALY with 99.87% confidence. The SHAP explanation shows SYN flags and speed pushed hard toward ATTACK. The attacker IP is now blocked."
+**What to say:** "The RandomForest model classified this as ANOMALY with 99.87% confidence. The SHAP explanation shows SYN flags and speed pushed hard toward ATTACK. The attacker IP is now blocked. My internet still works because the block only drops incoming packets FROM the attacker — my gateway is a different IP."
 
 **Verify the block:**
 ```bash
 nft list set ip leon blocked
-# Output: { 10.200.130.99 }
+# Output: { 10.200.130.91 }
 ```
 
-**What to say:** "This is a real nftables rule at the kernel level. Any packet from 10.200.130.99 is dropped before it reaches the application. The block auto-expires after 3600 seconds."
+**What to say:** "This is a real nftables rule at the kernel level. Any packet from 10.200.130.91 is dropped before it reaches the application. The block auto-expires after 3600 seconds. My internet still works — browse to any site to prove it."
+
+**Unblock to restore full access:**
+```bash
+sudo nft delete element ip leon blocked { 10.200.130.91 }
+```
 
 **Check the dashboard:** The Live tab shows the attack flows with `action: block` and SHAP explanations.
 
 ---
 
-## Step 4: Show Internet Dying (30 sec)
+## Step 4: Show Internet Dying (optional — skip if pressed for time)
 
-Now manually block the gateway to show what real blocking looks like:
+After step 3, your IP is blocked but internet still works. To prove kernel-level
+blocking actually kills connectivity, block the gateway manually:
 
 ```bash
 sudo nft add element ip leon blocked { 10.200.130.1 }
@@ -148,24 +167,12 @@ sudo nft add element ip leon blocked { 10.200.130.1 }
 - Open a browser, try any website → **fails**
 - In Terminal 3, run: `ping 8.8.8.8` → **100% packet loss**
 
-**What to say:** "I just blocked the gateway (my phone hotspot). All incoming internet traffic is now dropped by nftables. The internet is dead. This is what kernel-level blocking looks like."
-
-**Show the nftables rule:**
-```bash
-nft list set ip leon blocked
-# Output: { 10.200.130.99, 10.200.130.1 }
-```
+**What to say:** "I just blocked the gateway (my phone hotspot). All incoming internet traffic is now dropped by nftables. The internet is dead. This is what kernel-level blocking looks like. In production, LEON blocks the ATTACKER's IP, not the gateway — your internet stays up while the attacker is silenced."
 
 **Unblock to recover:**
 ```bash
 sudo nft delete element ip leon blocked { 10.200.130.1 }
 ```
-
-**Verify recovery:**
-- Browser loads again
-- `ping 8.8.8.8` → replies
-
-**What to say:** "Internet restored. In production, LEON blocks the ATTACKER's IP, not the gateway. Your internet stays up while the attacker is silenced. I blocked the gateway here just to demonstrate the kernel-level blocking mechanism."
 
 ---
 
@@ -280,11 +287,11 @@ L7 Blocking (nftables kernel-level drop)
 ## Quick Reference — All Commands
 
 ```bash
-# Start IPS (detect mode)
-sudo .venv/bin/python -m prevention.run_ips --live -i wlan0 -d 180 --honeypot
+# Start IPS (detect mode — captures on all interfaces)
+sudo .venv/bin/python -m prevention.run_ips --live -d 300 --honeypot
 
 # Start IPS (prevent mode — blocks attackers)
-sudo .venv/bin/python -m prevention.run_ips --live -i wlan0 -d 180 --prevent --honeypot
+sudo .venv/bin/python -m prevention.run_ips --live -d 300 --prevent --honeypot
 
 # Start dashboard
 ./run_dashboard.sh
@@ -292,16 +299,16 @@ sudo .venv/bin/python -m prevention.run_ips --live -i wlan0 -d 180 --prevent --h
 # Trigger honeypot
 nc 10.200.130.91 2323
 
-# Run DDoS attack
-sudo .venv/bin/python3 scripts/ddos_flood.py --target 10.200.130.91 --src 10.200.130.99
+# Run DDoS attack (same machine — sends on loopback)
+sudo .venv/bin/python3 scripts/ddos_flood.py --src 10.200.130.91 --target 10.200.130.91
 
 # Check blocked IPs
 nft list set ip leon blocked
 sudo .venv/bin/python -m prevention.run_ips --list-blocks
 
 # Unblock an IP
-sudo .venv/bin/python -m prevention.run_ips --unblock 10.200.130.99
-sudo nft delete element ip leon blocked { 10.200.130.99 }
+sudo .venv/bin/python -m prevention.run_ips --unblock 10.200.130.91
+sudo nft delete element ip leon blocked { 10.200.130.91 }
 
 # Block gateway (demo only — breaks internet)
 sudo nft add element ip leon blocked { 10.200.130.1 }
@@ -330,8 +337,8 @@ sudo nft delete element ip leon blocked { 10.200.130.1 }
 |---------|-----|
 | `ModuleNotFoundError: scapy` | `.venv/bin/pip install scapy` |
 | `nft: permission denied` | Use `sudo` for all IPS and nft commands |
-| Honeypot shows ALLOW instead of BLOCK | Normal for same-machine (localhost is whitelisted). In production, it would be BLOCK. |
-| DDoS doesn't trigger BLOCK | Check LEON is running with `--prevent`. Check the attack IP appears in `nft list set ip leon blocked`. |
+| DDoS shows MAC address warnings | You're using `--src` with a different IP on same machine. Use your own IP: `--src 10.200.130.91` |
+| DDoS doesn't trigger BLOCK | Make sure IPS is running with `--prevent`. For same-machine, run IPS **without** `-i` so it captures on lo. |
 | Internet doesn't recover after unblock | Run `sudo nft flush set ip leon blocked` to clear all blocks. |
 | Dashboard shows no data | Make sure IPS is running and sending WebSocket events. Check `http://127.0.0.1:8050/api/models`. |
-| Port 2323 shows "filtered" in nmap | This is the hotspot's client isolation, not LEON. Use same-machine testing. |
+| Honeypot shows ALLOW instead of BLOCK | Shouldn't happen — localhost (127.0.0.1) is whitelisted, but wlan0 IP is not. Use wlan0 IP for nc. |

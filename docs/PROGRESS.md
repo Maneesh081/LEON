@@ -404,6 +404,97 @@ confirm everything on Linux Mint. Docs: `docs/ips_and_dashboard_explained.md`.
 
 ---
 
+## Testing & Bug Fixes (Aug 23–24)
+
+### DDoS flood script — `scripts/ddos_flood.py`
+- Created `scripts/ddos_flood.py` for same-machine DDoS testing using scapy
+  with spoofed source IP. Rate-limited, auto-stops, progress output.
+- **Error 1: MAC address warnings on wlan0.** `send()` at L3 tries to resolve
+  destination MAC. When src == dst (same machine), scapy can't find the MAC
+  for a local address → falls back to broadcast → WiFi drops packets → LEON
+  never sees them.
+- **Fix 1:** Detect same-machine via `_detect_same_machine()`, set
+  `conf.iface = "lo"`. But `send(pkt, iface="lo")` is ignored by scapy at
+  L3 — `iface` parameter has no effect on L3 `send()`.
+- **Fix 2:** Use `sendp()` (layer 2) with `Loopback()` link-layer header for
+  same-machine. scapy's `Loopback()` class creates the correct 4-byte
+  loopback header. Separate machine uses normal `send()` on wlan0.
+- Separate machine (no LEON clone needed): just `pip install scapy` on laptop B.
+
+### Loopback capture — `sensor/packet.py`
+- `CaptureSession` uses `AF_PACKET` raw sockets + `parse_packet()` which
+  expected Ethernet frames (14-byte MAC header). Loopback frames have a
+  4-byte address family header instead.
+- **Error 2: All loopback frames failed parsing.** `parse_packet()` tried
+  `_parse_eth()` on every frame → `PacketParseError("not an ethernet frame")`
+  → zero packets accepted on lo.
+- **Fix 1:** Added `_parse_loopback()` helper + auto-detection in
+  `parse_packet()`: check first 4 bytes for loopback AF (2=IPv4, 10=IPv6)
+  vs Ethernet. Works for both lo and wlan0 without flags.
+- **Error 3: Loopback detection still failed.** scapy's `Loopback()` sends
+  AF in **little-endian** (`02 00 00 00`), but code used big-endian
+  (`struct.unpack("!I")` → read as 33554432, not 2). Frame fell through
+  to Ethernet path → garbage parsing → dropped.
+- **Fix 2:** Changed `struct.unpack("!I")` to `struct.unpack("<I")` (both in
+  `_parse_loopback()` and `parse_packet()` detection). Two lines changed.
+- **Verified:** Both loopback and Ethernet frames parse correctly. All 46
+  tests pass. No impact on wlan0 (MAC bytes never produce 2 or 10 as LE).
+
+### nmap testing — same machine
+- Ran `nmap -sS -T4 --min-rate 100 -p 1-100 10.200.130.91` on lo.
+- LEON captured on lo, classified each nmap probe individually (2-packet
+  flows). Most classified BENIGN (conf 0.5–0.75), 2 triggered ALERT
+  (ports 50, 73 → ANOMALY conf 0.51–0.52). None crossed block threshold
+  (0.90) because each probe is too small (only 2 packets).
+- nmap reported "100 filtered tcp ports" — kernel handles RST internally on
+  loopback, nmap doesn't receive responses via raw socket.
+- **Conclusion:** nmap works for detection (ALERT events fire) but not for
+  blocking (per-probe confidence too low). DDoS script concentrates 500+ SYNs
+  on one port → single flow with high signal → BLOCK.
+
+### Honeypot probe testing — same machine
+- Ran `nc 10.200.130.91 2323` from same machine.
+- Source IP is wlan0 IP (10.200.130.91), NOT 127.0.0.1 → not whitelisted.
+- DecisionEngine rule #2 fires: `source == "honeypot"` → BLOCK (conf=1.0).
+- First probe detected and decided BLOCK. Subsequent nc attempts would be
+  dropped by nftables.
+- **Note:** `docs/testing.md` originally said "ALLOW: whitelisted host" for
+  same-machine nc — this was wrong. Fixed to show correct BLOCK output.
+
+### Testing docs — `docs/testing.md`
+- Rewrote for same-machine workflow: no `-i wlan0` (captures on lo), DDoS
+  script uses own IP, correct honeypot expected output, step 4 (gateway
+  blocking) marked optional, all commands updated, troubleshooting table
+  refreshed.
+
+### Dashboard Models tab restyled
+- Added color-coded pill badges (green=supervised, gold=novelty), winner row
+  highlight, bold macro F1, rounded bar corners, per-model bar colors.
+- Stale comment at `app.js:143` fixed (removed histogram reference).
+
+### OneClassSVM — `model/train_compare.py`
+- Added `SGDOneClassSVM` from sklearn (SGD-based, fast, trained on BENIGN
+  only). Evaluated on same test split, added to `comparison_report.json`.
+- Updated `docs/model_explained.md` in 6 places (intro, section 3d table,
+  section 4, section 7 metrics, explanation, files table).
+
+### GitHub
+- Repo pushed: `https://github.com/Maneesh081/LEON.git` (public, `main`).
+- Commit `7373096 model added` includes OneClassSVM + Models tab restyling.
+
+### Errors encountered during this session
+
+| # | Error | Where | Root cause | Fix |
+|---|-------|-------|------------|-----|
+| 1 | MAC address warnings on wlan0 | `ddos_flood.py` | scapy `send()` resolves dest MAC; local address has no MAC on wlan0 | Detect same-machine, use `sendp()` + `Loopback()` on lo |
+| 2 | `send(pkt, iface="lo")` ignored | `ddos_flood.py` | scapy L3 `send()` ignores `iface` param | Use `sendp()` instead |
+| 3 | All loopback frames → PacketParseError | `sensor/packet.py` | `parse_packet()` only handled Ethernet (14-byte MAC header) | Added `_parse_loopback()` + auto-detection |
+| 4 | Loopback AF read as 33554432 | `sensor/packet.py` | Linux loopback uses little-endian; code used big-endian `!I` | Changed to `<I` (two lines) |
+| 5 | nmap shows "filtered" on loopback | nmap itself | Kernel handles RST internally on lo; nmap raw socket doesn't see responses | Not a bug — nmap limitation on loopback |
+| 6 | nmap probes not blocking | `decision.py` | Each probe is 2-packet flow → low RF confidence (0.51) < block threshold (0.90) | By design — use DDoS script for blocking demo |
+
+---
+
 ## Learning log
 All user Q&A and network concepts taught during development are kept in
 `q.md` — updated after every question.

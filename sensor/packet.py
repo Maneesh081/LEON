@@ -162,14 +162,40 @@ def _parse_icmp(payload: bytes) -> int:
     return payload[0]
 
 
+def _parse_loopback(frame: bytes) -> tuple[int, bytes]:
+    """Parse 4-byte loopback header, return (ethertype, ip_payload).
+    Linux loopback uses little-endian for the address family."""
+    if len(frame) < 4:
+        raise PacketParseError("truncated loopback header")
+    af = struct.unpack("<I", frame[:4])[0]
+    if af == 2:
+        return ETH_P_IP, frame[4:]
+    if af == 10:
+        return ETH_P_IPV6, frame[4:]
+    raise PacketParseError(f"unknown loopback address family {af}")
+
+
 def parse_packet(frame: bytes, ts: float | None = None) -> Packet:
     if ts is None:
         ts = time.time()
 
+    # Detect loopback vs Ethernet:
+    #   Loopback: first 4 bytes = address family (2=IPv4, 10=IPv6)
+    #   Ethernet: first 6 bytes = dst MAC (first byte LSB bit set for unicast)
+    # The key differentiator: loopback AF values (2, 10) are small numbers,
+    # while Ethernet dst MAC bytes are typically larger. We check the first
+    # 2 bytes: if they match a known loopback AF, treat as loopback.
     try:
-        ethertype, payload = _parse_eth(frame)
+        if len(frame) >= 4:
+            af = struct.unpack("<I", frame[:4])[0]
+            if af == 2 or af == 10:
+                ethertype, payload = _parse_loopback(frame)
+            else:
+                ethertype, payload = _parse_eth(frame)
+        else:
+            ethertype, payload = _parse_eth(frame)
     except PacketParseError:
-        raise PacketParseError("not an ethernet frame")
+        raise PacketParseError("not a recognised frame")
 
     if ethertype == ETH_P_IP:
         is_v4 = True
