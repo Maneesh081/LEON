@@ -43,12 +43,17 @@ event store as `{"layer": "L6", "type": "decision", ...}`.
 |---|-----------|--------|
 | 1 | IP in `LEON_WHITELIST` | **ALLOW** (never block whitelisted hosts) |
 | 2 | honeypot probe | **BLOCK** (deterministic, conf = 1.0) |
-| 3 | `label == ANOMALY` and `conf >= block_confidence` (0.90) | **BLOCK** `flow.src_ip` |
-| 4 | any other `alert` (ANOMALY ≥ 0.50, **or** novelty) | **ALERT** |
-| 5 | everything else | **ALLOW** |
+| 3 | `syn_count >= 100` AND `bwd_packets == 0` | **BLOCK** (SYN flood rule, conf = 1.0) |
+| 4 | `label == ANOMALY` and `conf >= block_confidence` (0.90) | **BLOCK** `flow.src_ip` |
+| 5 | any other `alert` (ANOMALY ≥ 0.50, **or** novelty) | **ALERT** |
+| 6 | everything else | **ALLOW** |
 
 Key decisions we made:
 
+- **Rule-based SYN flood detection.** 100+ SYNs with zero responses is always
+  an attack — no ML needed. This mirrors real firewalls: rules for obvious
+  attacks, ML for novel ones. Fires before the ML model, so even if the model
+  is confused (e.g. same-IP loopback traffic), the rule catches it.
 - **Novelty never blocks.** A novelty alert means "unusual, not a proven
   attack". On a home network, QUIC/YouTube/odd ports trip the novelty net all
   the time — blocking on it would cut you off. Novelty → ALERT only.

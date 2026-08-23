@@ -280,11 +280,13 @@ confidence), then hand Block decisions to the nftables IPS (L7).
 
 ### What was built
 - `prevention/decision.py` — `DecisionEngine`: turns a live verdict + flow into
-  an `Decision(action, attacker_ip, reason, confidence, source)`. Rules in
+  a `Decision(action, attacker_ip, reason, confidence, source)`. Rules in
   order: whitelisted host → ALLOW (never block); honeypot probe → BLOCK
-  (conf=1.0, deterministic); `label==ANOMALY and conf >= block_confidence`
-  → BLOCK the flow initiator (`flow.src_ip`); any other alert (ANOMALY ≥ 0.50
-  or novelty) → ALERT (**novelty never blocks**); else ALLOW.
+  (conf=1.0, deterministic); **SYN flood rule** → BLOCK (syn_count >= 100
+  AND bwd_packets == 0, conf=1.0, source="rule"); `label==ANOMALY and
+  conf >= block_confidence` → BLOCK the flow initiator (`flow.src_ip`);
+  any other alert (ANOMALY ≥ 0.50 or novelty) → ALERT (**novelty never
+  blocks**); else ALLOW.
 - Every decision is written to the event store (`layer="L6", type="decision"`,
   incl. label/novelty/flow) and logged. Decisions are *computed* always,
   *enforced* only in prevent mode.
@@ -296,7 +298,8 @@ confidence), then hand Block decisions to the nftables IPS (L7).
 ### Test results
 `prevention/test_decision.py` — ALL PASS (whitelist, high-conf block targeting
 src_ip, below-threshold alert, novelty-never-blocks, honeypot deterministic
-block, normal allow, event logging, JSON round-trip).
+block, **SYN flood block**, **SYN flood not triggered with responses**,
+**SYN flood below threshold**, normal allow, event logging, JSON round-trip).
 
 ### How to run L6
 ```bash
@@ -492,6 +495,21 @@ confirm everything on Linux Mint. Docs: `docs/ips_and_dashboard_explained.md`.
 | 4 | Loopback AF read as 33554432 | `sensor/packet.py` | Linux loopback uses little-endian; code used big-endian `!I` | Changed to `<I` (two lines) |
 | 5 | nmap shows "filtered" on loopback | nmap itself | Kernel handles RST internally on lo; nmap raw socket doesn't see responses | Not a bug — nmap limitation on loopback |
 | 6 | nmap probes not blocking | `decision.py` | Each probe is 2-packet flow → low RF confidence (0.51) < block threshold (0.90) | By design — use DDoS script for blocking demo |
+| 7 | DDoS not blocking (RF said BENIGN) | `decision.py` | Same-IP loopback traffic is out-of-distribution for RF trained on CICIDS-2017; RF classifies as BENIGN conf=0.52 | Added rule-based SYN flood detector (syn>=100 AND bwd==0 → BLOCK). Real firewalls do this too. |
+
+### SYN flood rule — successful BLOCK (Aug 24)
+- Added rule-based SYN flood detection to `DecisionEngine`: `syn_count >= 100
+  AND bwd_packets == 0 → BLOCK` (conf=1.0, source="rule").
+- This fires **before** the ML model — catches SYN floods regardless of what
+  the ML says.
+- **Verified on loopback:** `ddos_flood.py --src 10.200.130.91 --target
+  10.200.130.91 --port 80 --count 500 --rate 100` → LEON showed:
+  `[BLOCK] label=ANOMALY conf=0.5267 novelty=YES ... action: block - SYN flood
+  (2000 SYNs, 0 responses)`. nftables entry confirmed with `nft list set ip
+  leon blocked`.
+- Internet stayed up after self-block because the nftables rule only drops
+  incoming packets FROM the blocked IP — gateway responses come FROM a
+  different IP.
 
 ---
 

@@ -1,7 +1,7 @@
 # LEON — Full Demo & Testing Guide
 
 Step-by-step guide to demonstrate every LEON feature on a single machine.
-Works on the Omarchy laptop (or any Linux with Python 3.12+, nftables, scapy).
+Works on **Linux Mint**, **Omarchy/Arch**, or any Linux with Python 3.12+, nftables, scapy.
 
 ---
 
@@ -38,7 +38,7 @@ sees same-machine DDoS traffic on loopback.
 Wait until you see:
 ```
 honeypot listening on port 2323
-capture started on interface wlan0
+capture started on interface lo
 ```
 
 And flows start scrolling:
@@ -48,7 +48,7 @@ And flows start scrolling:
       action: allow - normal flow
 ```
 
-**What to say:** "This is LEON capturing live traffic on wlan0. Every flow is classified by the RandomForest model. Normal traffic gets ALLOW. Unusual patterns trigger novelty alerts."
+**What to say:** "This is LEON capturing live traffic on lo. Every flow is classified by the RandomForest model. Normal traffic gets ALLOW. Unusual patterns trigger novelty alerts."
 
 **Terminal 2 — Dashboard:**
 ```bash
@@ -78,7 +78,9 @@ The `nc` command connects to port 2323 (a dead port with no real service).
 
 **In Terminal 1 (IPS), you should see:**
 ```
-[HONEYPOT] probe from 10.200.130.91 -> BLOCK: honeypot probe - no real service should be contacted
+[BLOCK] label=BENIGN  conf=1.0000  novelty=no  score=0.1334
+      flow TCP 10.200.130.91:xxxxx -> 10.200.130.91:2323  fwd=1p/60B bwd=0p/0B  syn=1 ack=0 ...
+      action: block - honeypot probe - no real service should be contacted
 ```
 
 The honeypot detected the probe. The source is your wlan0 IP (not 127.0.0.1),
@@ -91,7 +93,7 @@ Press Ctrl+C in Terminal 3 to stop nc.
 
 ---
 
-## Step 3: DDoS Detection (60 sec)
+## Step 3: DDoS Detection + Blocking (60 sec)
 
 Now restart the IPS with **prevent mode** enabled. Ctrl+C Terminal 1, then:
 
@@ -108,16 +110,15 @@ sudo .venv/bin/python3 scripts/ddos_flood.py --src 10.200.130.91 --target 10.200
 ```
 
 Note: `--src` is your own IP. The script detects same-machine and sends on loopback.
-LEON sees the flood on lo, classifies ANOMALY, blocks your IP. Internet stays up
-because the nftables rule only drops incoming packets FROM your IP — responses from
-the gateway come FROM `10.200.130.1`, not your IP.
+LEON sees the flood on lo. The **rule-based SYN flood detector** (not the ML model)
+catches it: 100+ SYNs with 0 responses is always an attack.
 
 You'll see:
 ```
 SYN flood: 500 packets -> 10.200.130.91:80
   src=10.200.130.91  rate=100 pps  duration=~5s
   mode: same-machine (loopback)
-  NOTE: run LEON without -i to capture on lo: sudo .venv/bin/python -m prevention.run_ips --live -d 300 --prevent --honeypot
+  NOTE: run LEON without -i to capture on lo: ...
 
   [  0.5s] sent 50/500 packets
   [  1.0s] sent 100/500 packets
@@ -129,13 +130,18 @@ Done. 500 packets sent in 5.0s
 
 **In Terminal 1 (IPS), you should see:**
 ```
-[BLOCK ] src=10.200.130.91  label=ANOMALY  conf=0.9987  reason=known attack (confidence 0.99 >= 0.90)
-      flow TCP 10.200.130.91:xxxxx -> 10.200.130.91:80  fwd=500p/30000B bwd=0p/0B  syn=500 ack=0 ...
-      action: block - known attack (confidence 0.99 >= 0.90)
-      why: SYN flags=500 → ATTACK-like (strong) · speed=1000 → ATTACK-like (strong)
+[BLOCK] label=ANOMALY  conf=0.5267  novelty=YES score=-0.1882
+      flow TCP 10.200.130.91:20 -> 10.200.130.91:80  fwd=500p/20000B bwd=0p/0B  syn=500 ack=0 ...
+      action: block - SYN flood (500 SYNs, 0 responses)
+      why: dest port=80 → ATTACK-like (moderate) · speed=156 → NORMAL (moderate) · ...
 ```
 
-**What to say:** "The RandomForest model classified this as ANOMALY with 99.87% confidence. The SHAP explanation shows SYN flags and speed pushed hard toward ATTACK. The attacker IP is now blocked. My internet still works because the block only drops incoming packets FROM the attacker — my gateway is a different IP."
+The **rule-based detector** fires: `syn_count >= 100 AND bwd_packets == 0` → BLOCK.
+The ML model may say BENIGN (same-IP traffic is out-of-distribution), but the rule
+catches it regardless. This mirrors how real firewalls work — rules for obvious attacks,
+ML for novel ones.
+
+**What to say:** "The rule-based SYN flood detector caught this immediately. 500 SYNs with zero responses is always an attack — no ML needed. The attacker IP is now blocked. My internet still works because the block only drops incoming packets FROM the attacker — my gateway is a different IP."
 
 **Verify the block:**
 ```bash
@@ -143,9 +149,9 @@ nft list set ip leon blocked
 # Output: { 10.200.130.91 }
 ```
 
-**What to say:** "This is a real nftables rule at the kernel level. Any packet from 10.200.130.91 is dropped before it reaches the application. The block auto-expires after 3600 seconds. My internet still works — browse to any site to prove it."
+**What to say:** "This is a real nftables rule at the kernel level. Any packet from 10.200.130.91 is dropped before it reaches the application. The block auto-expires after 3600 seconds."
 
-**Unblock to restore full access:**
+**Unblock yourself after the demo:**
 ```bash
 sudo nft delete element ip leon blocked { 10.200.130.91 }
 ```
@@ -156,8 +162,7 @@ sudo nft delete element ip leon blocked { 10.200.130.91 }
 
 ## Step 4: Show Internet Dying (optional — skip if pressed for time)
 
-After step 3, your IP is blocked but internet still works. To prove kernel-level
-blocking actually kills connectivity, block the gateway manually:
+After step 3, block the gateway manually to prove kernel-level blocking kills connectivity:
 
 ```bash
 sudo nft add element ip leon blocked { 10.200.130.1 }
@@ -235,15 +240,15 @@ Switch to the browser showing the dashboard.
 **Live tab:**
 - Cumulative chart: shows ALLOW/ALERT/BLOCK counts over time
 - Verdict feed: every flow with label, confidence, novelty, action, reason, SHAP
-- Point out a BLOCK event from the DDoS: "99% confidence, SHAP shows SYN flags pushed toward ATTACK"
+- Point out a BLOCK event from the DDoS: "rule-based detection, SHAP explains why the model flagged it"
 
 **Dataset tab:**
 - 8 CICIDS-2017 files, 2.37M total rows
 - BENIGN: 1,959,818 / ANOMALY: 416,074
 - 11 features, stratified sample table
 
-**Models tab (if available):**
-- Comparison of RandomForest, XGBoost, IsolationForest
+**Models tab:**
+- Comparison of RandomForest, XGBoost, OneClassSVM, IsolationForest
 - Metrics: accuracy, macroF1, attack recall, benign false alert rate
 
 **What to say:** "The dashboard gives a complete view: real-time detection, explainability via SHAP, and the training data behind the model."
@@ -255,7 +260,7 @@ Switch to the browser showing the dashboard.
 Wrap up with the architecture:
 
 ```
-L1 Capture (scapy on wlan0)
+L1 Capture (scapy on lo/wlan0)
   ↓
 L2 Flow Table (group packets into flows)
   ↓
@@ -265,7 +270,7 @@ L4 ML Classification (RandomForest: BENIGN vs ANOMALY)
   ↓
 L5 SHAP Explainability (which features pushed the verdict)
   ↓
-L6 Decision Engine (whitelist → honeypot → model → alert → allow)
+L6 Decision Engine (whitelist → honeypot → SYN flood rule → model → alert → allow)
   ↓
 L7 Blocking (nftables kernel-level drop)
 ```
@@ -274,7 +279,7 @@ L7 Blocking (nftables kernel-level drop)
 - 99.16% accuracy, 98.99% macro F1
 - 99.37% attack recall (catches 99% of attacks)
 - <1% benign false alert rate
-- Three detection layers: ML classifier + novelty detector + honeypot
+- Four detection layers: ML classifier + novelty detector + honeypot + rule-based SYN flood
 
 **Honest limitations:**
 - Trained on CICIDS-2017 (university lab, not real-world internet)
@@ -331,6 +336,34 @@ sudo nft delete element ip leon blocked { 10.200.130.1 }
 
 ---
 
+## Two-Laptop Testing (University WiFi)
+
+For a more realistic demo with a separate attacker machine:
+
+**Laptop A (LEON — your machine):**
+```bash
+# Start IPS on wlan0
+sudo .venv/bin/python -m prevention.run_ips --live -d 300 --prevent --honeypot -i wlan0
+
+# Start dashboard
+./run_dashboard.sh
+```
+
+**Laptop B (Attacker — just needs Python + scapy, no LEON clone):**
+```bash
+# Install scapy
+pip install scapy
+
+# Copy ddos_flood.py from Laptop A, then run:
+sudo python3 ddos_flood.py --target <A's wlan0 IP> --src <B's wlan0 IP> --port 80 --count 1000 --rate 200
+```
+
+On Laptop A, LEON captures on wlan0, the RF model classifies the flood (different IPs = in-distribution), and the SYN flood rule + ML model both fire BLOCK.
+
+**Note on Linux Mint:** The `run_ips.sh` and `run_dashboard.sh` scripts work on Mint. If you get `nft: permission denied`, use `sudo`. If the venv has issues, recreate with `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
+
+---
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -342,3 +375,5 @@ sudo nft delete element ip leon blocked { 10.200.130.1 }
 | Internet doesn't recover after unblock | Run `sudo nft flush set ip leon blocked` to clear all blocks. |
 | Dashboard shows no data | Make sure IPS is running and sending WebSocket events. Check `http://127.0.0.1:8050/api/models`. |
 | Honeypot shows ALLOW instead of BLOCK | Shouldn't happen — localhost (127.0.0.1) is whitelisted, but wlan0 IP is not. Use wlan0 IP for nc. |
+| Python venv broken on Mint | `python3 -m venv .venv --clear && .venv/bin/pip install -r requirements.txt` |
+| nftables not found on Mint | `sudo apt install nftables && sudo systemctl enable nftables` |

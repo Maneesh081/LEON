@@ -457,6 +457,45 @@ sudo ./run_ips.sh --live -i wlan0 -d 60 --prevent --honeypot    # terminal 1, fu
 - **nftables set** = a named list of IPs; add/delete an element without
   touching the rules. `flags timeout` makes entries auto-expire.
 - **Whitelist** = hosts LEON never blocks, no matter what the model says.
+- **Rule-based detection** = hard-coded logic (e.g. "100+ SYNs with 0
+  responses = SYN flood") that runs alongside the ML model. Real firewalls
+  always have both: rules catch obvious attacks instantly, ML catches novel
+  ones.
+- **Blocking own IP** = `ip saddr @blocked drop` in the INPUT chain only
+  drops *incoming* packets FROM the blocked IP. Your outgoing traffic still
+  leaves via wlan0 with src=your-IP, but the gateway (10.200.130.1) responds
+  from a *different* IP — so internet still works. Same-machine traffic on
+  loopback IS affected (the kernel sees it as incoming from yourself).
 
 ---
-*Last updated: Dashboard polished (2 charts), Dataset tab, and SHAP explanation now shown in the Live feed. Next: final end-to-end live testing.*
+
+## Decision engine & SYN flood blocking
+
+### Q: Why did the DDoS not get blocked even though LEON saw all 1000 SYNs?
+- The **ML model (RF)** classified the same-IP loopback flood as BENIGN
+  (conf=0.5267) — it was trained on CICIDS-2017 where attacks come from
+  *different* IPs. Same-IP-to-same-IP traffic is out-of-distribution.
+- The **IsolationForest** correctly flagged novelty (score < threshold), but
+  novelty never blocks by design (too many false positives on home networks).
+- **Fix:** Added a rule-based SYN flood detector to the DecisionEngine:
+  `syn_count >= 100 AND bwd_packets == 0 → BLOCK`. This fires before the
+  ML model and catches SYN floods regardless of what the model says.
+
+### Q: Does the SYN flood rule go into the NGFW?
+- Yes. The DecisionEngine *is* the L6 "brain" of the NGFW. The rule sits
+  alongside the ML model, just like the honeypot rule. Rule-based checks for
+  obvious attacks + ML for novel ones = standard NGFW architecture.
+
+### Q: How do I see which IPs are blocked?
+```bash
+nft list set ip leon blocked
+```
+Or via LEON: `sudo .venv/bin/python -m prevention.run_ips --list-blocks`
+
+### Q: Will a separate attacker laptop trigger BLOCK?
+- Most likely yes. With different IPs, the traffic matches CICIDS-2017 DoS
+  patterns the RF was trained on. The model is more likely to classify as
+  ANOMALY with high confidence. Plus the SYN flood rule catches it regardless.
+
+---
+*Last updated: Rule-based SYN flood detection added and verified on loopback. 49 tests pass. Docs updated for Linux Mint compatibility.*
