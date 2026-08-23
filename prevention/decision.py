@@ -4,9 +4,10 @@ Rules, evaluated in order:
 
   1. whitelisted host            -> ALLOW   (never block whitelisted hosts)
   2. honeypot probe              -> BLOCK   (deterministic, confidence=1.0)
-  3. ANOMALY and conf >= block   -> BLOCK   the flow initiator (flow.src_ip)
-  4. any other alert (novelty)   -> ALERT   (novelty never blocks)
-  5. else                        -> ALLOW
+  3. SYN flood (rule-based)      -> BLOCK   syn_count >= 100 AND bwd_packets == 0
+  4. ANOMALY and conf >= block   -> BLOCK   the flow initiator (flow.src_ip)
+  5. any other alert (novelty)   -> ALERT   (novelty never blocks)
+  6. else                        -> ALLOW
 
 Decisions are always computed and written to the event store; they are only
 *enforced* (nftables block) when prevent mode is enabled (see run_ips.py).
@@ -31,6 +32,7 @@ SRC_MODEL = "model"
 SRC_NOVELTY = "novelty"
 SRC_HONEYPOT = "honeypot"
 SRC_WHITELIST = "whitelist"
+SRC_RULE = "rule"
 
 
 @dataclass
@@ -84,6 +86,12 @@ class DecisionEngine:
             return self._record(Decision(
                 BLOCK, ip, "honeypot probe - no real service should be contacted",
                 1.0, SRC_HONEYPOT), verdict, flow)
+
+        if flow is not None and flow.syn_count >= 100 and flow.bwd_packets == 0:
+            return self._record(Decision(
+                BLOCK, ip,
+                f"SYN flood ({flow.syn_count} SYNs, 0 responses)",
+                1.0, SRC_RULE), verdict, flow)
 
         conf = float(verdict.get("confidence", 0.0))
         label = verdict.get("label")

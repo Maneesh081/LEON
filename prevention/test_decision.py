@@ -12,6 +12,7 @@ from prevention.decision import (
     SRC_HONEYPOT,
     SRC_MODEL,
     SRC_NOVELTY,
+    SRC_RULE,
     SRC_WHITELIST,
     DecisionEngine,
 )
@@ -102,6 +103,35 @@ def test_honeypot_block():
     td.cleanup()
 
 
+def test_syn_flood_block():
+    print("test: SYN flood (100+ SYNs, 0 responses) blocks regardless of ML")
+    cfg, engine, store, td = make_engine()
+    flow = mkflow(syn_count=1000, bwd_packets=0, ack_count=0)
+    d = engine.decide(verdict("BENIGN", 0.52, False), flow)
+    chk(d.action == BLOCK, f"block, got {d.action}")
+    chk(d.source == SRC_RULE, f"source=rule, got {d.source}")
+    chk(d.attacker_ip == flow.src_ip, f"attacker is src_ip, got {d.attacker_ip}")
+    td.cleanup()
+
+
+def test_syn_flood_not_triggered_with_responses():
+    print("test: high SYN count with responses does NOT trigger flood rule")
+    cfg, engine, store, td = make_engine()
+    flow = mkflow(syn_count=1000, bwd_packets=500, ack_count=500)
+    d = engine.decide(verdict("BENIGN", 0.99, False), flow)
+    chk(d.action == ALLOW, f"allow (has responses), got {d.action}")
+    td.cleanup()
+
+
+def test_syn_flood_below_threshold():
+    print("test: low SYN count with 0 responses does NOT trigger flood rule")
+    cfg, engine, store, td = make_engine()
+    flow = mkflow(syn_count=50, bwd_packets=0, ack_count=0)
+    d = engine.decide(verdict("BENIGN", 0.99, False), flow)
+    chk(d.action == ALLOW, f"allow (below threshold), got {d.action}")
+    td.cleanup()
+
+
 def test_normal_allow():
     print("test: normal flow is allowed")
     cfg, engine, store, td = make_engine()
@@ -137,6 +167,9 @@ if __name__ == "__main__":
     test_below_block_threshold()
     test_novelty_never_blocks()
     test_honeypot_block()
+    test_syn_flood_block()
+    test_syn_flood_not_triggered_with_responses()
+    test_syn_flood_below_threshold()
     test_normal_allow()
     test_event_logged()
     test_json_serializable()
