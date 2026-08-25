@@ -400,6 +400,17 @@ curl (index 200, /api/models JSON, /api/blocks).
 sudo ./run_ips.sh --live -i wlan0 -d 60 --prevent --honeypot   # terminal 1
 ```
 
+### Dashboard block display fix (Aug 24)
+- **Bug:** Block counter showed 0 even when blocks happened. Blocks & Logs tab
+  showed "no IPs currently blocked" despite nftables having entries.
+- **Root cause:** `loadBlocks()` polled `/api/blocks` every 5 seconds, which
+  required root (nftables query). Dashboard runs without sudo → query silently
+  failed → returned `[]` → overwrote the correct block counter to 0.
+- **Fix:** Removed nftables polling entirely. Blocked IPs list now built from
+  WebSocket events (`type === "decision" && action === "block"`). Block counter
+  comes exclusively from `count("blocks")` in `render()`. No root needed,
+  always in sync, real-time via WebSocket.
+
 ### Next step
 **Final end-to-end testing** — run live attacks (SYN flood / port scan from a
 test host), verify detection → SHAP → decision → block on the dashboard, and

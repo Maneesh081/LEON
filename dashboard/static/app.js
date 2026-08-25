@@ -3,7 +3,7 @@
 /* ---------- state ---------- */
 const state = {
   events: [],
-  blocked: [],
+  blockedIPs: new Map(),  // ip -> { ts, reason, source }
   trend: null,
   modelsChart: null,
   perClassChart: null,
@@ -40,7 +40,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     $("tab-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "models") loadModels();
     if (btn.dataset.tab === "dataset") loadDataset();
-    if (btn.dataset.tab === "blocks") { loadBlocks(); renderLogs(); }
+    if (btn.dataset.tab === "blocks") { renderBlockList(); renderLogs(); }
   });
 });
 
@@ -74,6 +74,13 @@ ws.onmessage = (msg) => {
 function ingest(ev) {
   state.events.push(ev);
   if (state.events.length > 2000) state.events.splice(0, state.events.length - 2000);
+  if (ev.type === "decision" && ev.action === "block" && ev.attacker_ip) {
+    state.blockedIPs.set(ev.attacker_ip, {
+      ts: ev.ts,
+      reason: ev.reason || "",
+      source: ev.source || "",
+    });
+  }
 }
 
 function fmtTime(ts) {
@@ -357,20 +364,13 @@ function renderClassChart(labels) {
 }
 
 /* ---------- blocks & logs ---------- */
-async function loadBlocks() {
-  try {
-    const res = await fetch("/api/blocks");
-    const data = await res.json();
-    state.blocked = data.blocked || [];
-    $("blockList").innerHTML = state.blocked.length
-      ? state.blocked.map((ip) => `<li>⛔ ${ip}</li>`).join("")
-      : '<li style="color:var(--muted)">no IPs currently blocked</li>';
-    $("cBlocks").textContent = state.blocked.length;
-  } catch (e) {
-    $("blockList").innerHTML = '<li style="color:var(--muted)">cannot read nftables (needs root?)</li>';
-  }
+function renderBlockList() {
+  const ips = Array.from(state.blockedIPs.entries()).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+  $("blockList").innerHTML = ips.length
+    ? ips.map(([ip, info]) => `<li>⛔ <strong>${ip}</strong> <span style="color:var(--muted)">(${info.reason})</span></li>`).join("")
+    : '<li style="color:var(--muted)">no IPs currently blocked</li>';
 }
-$("refreshBlocks").addEventListener("click", loadBlocks);
+$("refreshBlocks").addEventListener("click", renderBlockList);
 
 function renderLogs() {
   const lines = state.events.slice(-60).reverse().map((e) => JSON.stringify(e));
@@ -378,4 +378,4 @@ function renderLogs() {
 }
 
 /* ---------- boot ---------- */
-setInterval(loadBlocks, 5000);
+// Blocks list is built from WebSocket events — no polling needed.
