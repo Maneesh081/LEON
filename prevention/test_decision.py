@@ -115,11 +115,22 @@ def test_syn_flood_block():
 
 
 def test_syn_flood_not_triggered_with_responses():
-    print("test: high SYN count with responses does NOT trigger flood rule")
+    print("test: high SYN count with ACK responses does NOT trigger flood rule")
     cfg, engine, store, td = make_engine()
-    flow = mkflow(syn_count=1000, bwd_packets=500, ack_count=500)
+    flow = mkflow(syn_count=1000, bwd_packets=500, ack_count=500, rst_count=0)
     d = engine.decide(verdict("BENIGN", 0.99, False), flow)
-    chk(d.action == ALLOW, f"allow (has responses), got {d.action}")
+    chk(d.action == ALLOW, f"allow (has ACK responses), got {d.action}")
+    td.cleanup()
+
+
+def test_syn_flood_rst_responses_block():
+    print("test: SYN flood with all-RST responses blocks (closed port)")
+    cfg, engine, store, td = make_engine()
+    flow = mkflow(syn_count=2000, bwd_packets=2000, rst_count=2000, ack_count=0)
+    d = engine.decide(verdict("BENIGN", 0.75, False), flow)
+    chk(d.action == BLOCK, f"block, got {d.action}")
+    chk(d.source == SRC_RULE, f"source=rule, got {d.source}")
+    chk("2000 RST" in d.reason, f"reason mentions RST: {d.reason}")
     td.cleanup()
 
 
@@ -169,6 +180,7 @@ if __name__ == "__main__":
     test_honeypot_block()
     test_syn_flood_block()
     test_syn_flood_not_triggered_with_responses()
+    test_syn_flood_rst_responses_block()
     test_syn_flood_below_threshold()
     test_normal_allow()
     test_event_logged()

@@ -497,5 +497,23 @@ Or via LEON: `sudo .venv/bin/python -m prevention.run_ips --list-blocks`
   patterns the RF was trained on. The model is more likely to classify as
   ANOMALY with high confidence. Plus the SYN flood rule catches it regardless.
 
+### Q: Why doesn't the ML model detect SYN floods on its own?
+- CICIDS-2017 has **zero SYN flood samples**. Its "DDoS" category is UDP/ICMP
+  floods (no TCP flags). "DoS Hulk" is HTTP GET floods. Neither produces SYN
+  flags. The model has never learned what a SYN flood looks like.
+- Specifically: across all 2.37M training rows, `syn_count > 0 AND
+  rst_count > 0` appears in **zero rows**. The model sees a flow with
+  `syn=2000, rst=2000, bwd=2000` and classifies it as BENIGN because that
+  feature combination was never labeled as attack in training.
+- **The model isn't broken — the training data has a blind spot.** This is why
+  the rule-based SYN flood detector is essential. Production firewalls always
+  have both: rules for obvious attacks, ML for novel ones.
+
+### Q: Should we retrain with more anomaly data?
+- Yes, for the project's completeness. Adding synthetic SYN flood flows
+  (both open-port and closed-port variants) to the training CSVs would let
+  the model learn the pattern. But the rule-based fix works immediately and
+  is sufficient for the demo. Retraining is a longer-term improvement.
+
 ---
 *Last updated: Rule-based SYN flood detection added and verified on loopback. 49 tests pass. Docs updated for Linux Mint compatibility.*

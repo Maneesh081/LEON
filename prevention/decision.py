@@ -4,7 +4,7 @@ Rules, evaluated in order:
 
   1. whitelisted host            -> ALLOW   (never block whitelisted hosts)
   2. honeypot probe              -> BLOCK   (deterministic, confidence=1.0)
-  3. SYN flood (rule-based)      -> BLOCK   syn_count >= 100 AND bwd_packets == 0
+  3. SYN flood (rule-based)      -> BLOCK   syn_count >= 100 AND (bwd == 0 OR rst == bwd)
   4. ANOMALY and conf >= block   -> BLOCK   the flow initiator (flow.src_ip)
   5. any other alert (novelty)   -> ALERT   (novelty never blocks)
   6. else                        -> ALLOW
@@ -87,10 +87,11 @@ class DecisionEngine:
                 BLOCK, ip, "honeypot probe - no real service should be contacted",
                 1.0, SRC_HONEYPOT), verdict, flow)
 
-        if flow is not None and flow.syn_count >= 100 and flow.bwd_packets == 0:
+        if (flow is not None and flow.syn_count >= 100
+                and (flow.bwd_packets == 0 or flow.rst_count == flow.bwd_packets)):
             return self._record(Decision(
                 BLOCK, ip,
-                f"SYN flood ({flow.syn_count} SYNs, 0 responses)",
+                f"SYN flood ({flow.syn_count} SYNs, {flow.bwd_packets} responses, {flow.rst_count} RST)",
                 1.0, SRC_RULE), verdict, flow)
 
         conf = float(verdict.get("confidence", 0.0))
