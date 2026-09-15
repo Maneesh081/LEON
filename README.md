@@ -135,6 +135,32 @@ sudo .venv/bin/python -m prevention.run_ips --list-blocks
 sudo .venv/bin/python -m prevention.run_ips --unblock 1.2.3.4
 ```
 
+### Discord notifications (any distro — Arch, Linux Mint, Ubuntu)
+
+Get a Discord message whenever LEON blocks an IP. Setup takes 10 seconds:
+
+```bash
+# 1. Create a webhook in your Discord server:
+#    Server Settings → Integrations → Webhooks → New Webhook → Copy URL
+
+# 2. Save it (writes core/leon.json — gitignored, works under sudo):
+.venv/bin/python -m prevention.run_ips --set-webhook https://discord.com/api/webhooks/YOUR_URL
+
+# 3. Run LEON — notification fires on every block event:
+sudo ./run_ips.sh --live -i wlan0 -d 60 --prevent --honeypot
+# → notifications: discord (cooldown 10s)
+```
+
+Check current settings:
+```bash
+.venv/bin/python -m prevention.run_ips --show-notify
+```
+
+> **Note:** env vars (`export LEON_NOTIFY_DISCORD_WEBHOOK=...`) do NOT survive
+> `sudo` — the `--set-webhook` file approach works on every distro. The
+> webhook URL is stored in `core/leon.json` (gitignored) so it never enters
+> the git repo. On a new machine just run `--set-webhook` once.
+
 ### Dashboard (no root — run in a second terminal)
 
 ```bash
@@ -174,6 +200,8 @@ pre-trained `best_model.joblib` is committed to the repo.
 | `LEON_HONEYPOT_ENABLED` | `1` | enable the honeypot |
 | `LEON_HONEYPOT_PORTS` | `2323` | decoy ports |
 | `LEON_HONEYPOT_DWELL` | `30` | seconds to hold a probe open |
+| `LEON_NOTIFY_DISCORD_WEBHOOK` | unset | Discord webhook URL (or set via `--set-webhook`) |
+| `LEON_NOTIFY_COOLDOWN` | `10` | min seconds between notifications (0 = no limit) |
 | `LEON_DASHBOARD_PORT` | `8050` | dashboard HTTP port |
 
 ## Docs & learning log
@@ -183,5 +211,6 @@ All in the `docs/` folder:
 - `docs/model_explained.md` — how the ML + SHAP layers work in plain English.
 - `docs/ips_and_dashboard_explained.md` — L6 decision engine, L7 nftables + honeypot, dashboard walkthrough.
 - `docs/plan.md` — original build plan per layer.
+- `docs/discord_webhooks.md` — the Discord block-notification guide (setup, testing, troubleshooting).
 - `docs/PROGRESS.md` — build log per layer.
 - `docs/q.md` — every Q&A from development (network concepts, Linux, LEON layers, dashboard design).

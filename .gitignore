@@ -10,3 +10,4 @@ model/data/
 *.swo
 *~
 .env
+core/leon.json

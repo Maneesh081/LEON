@@ -4,3 +4,4 @@ cd "$(dirname "$0")"
 .venv/bin/python -m prevention.test_decision
 .venv/bin/python -m prevention.test_blocker
 .venv/bin/python -m prevention.test_honeypot
+.venv/bin/python -m prevention.test_notify

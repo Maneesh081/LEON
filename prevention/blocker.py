@@ -23,6 +23,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 from core.config import Config
 from core.log import get_logger
@@ -40,10 +41,11 @@ class NftablesError(Exception):
 
 
 class NftablesBlocker:
-    def __init__(self, config: Config | None = None) -> None:
+    def __init__(self, config: Config | None = None, on_block: Any = None) -> None:
         self.config = config or Config()
         self.blocks_file = Path(self.config.blocks_file)
         self._blocks: dict[str, dict] = {}  # ip -> {blocked_at, expires_at|None}
+        self.on_block = on_block
 
     # ---------- low-level ----------
 
@@ -99,7 +101,8 @@ class NftablesBlocker:
 
     # ---------- operations ----------
 
-    def block(self, ip: str, timeout: float | None = None) -> bool:
+    def block(self, ip: str, timeout: float | None = None,
+              reason: str | None = None, source: str | None = None) -> bool:
         if timeout is None:
             timeout = self.config.block_timeout
         self.ensure()
@@ -113,6 +116,11 @@ class NftablesBlocker:
         self._blocks[ip] = {"blocked_at": time.time(), "expires_at": expires_at}
         self._save()
         log.info("blocked %s (timeout=%ss)", ip, int(timeout) if timeout else "permanent")
+        if self.on_block is not None:
+            try:
+                self.on_block(ip, reason=reason, source=source, timeout=timeout)
+            except Exception as exc:  # noqa: BLE001 - a callback can never break blocking
+                log.error("on_block callback failed: %s", exc)
         return True
 
     def unblock(self, ip: str) -> bool:

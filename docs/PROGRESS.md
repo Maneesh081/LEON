@@ -530,6 +530,94 @@ confirm everything on Linux Mint. Docs: `docs/ips_and_dashboard_explained.md`.
 
 ---
 
+## Block Notifications — Discord (Phase 1) ✅
+
+### What was built
+- `prevention/notify.py` — `BlockNotifier` class: sends a brief Discord
+  webhook notification whenever LEON blocks an IP. Uses `urllib.request`
+  (stdlib, no extra deps). Runs sends in daemon threads so the pipeline is
+  never blocked. Errors are caught and logged, never raised.
+- Rate limiting: a configurable cooldown (`LEON_NOTIFY_COOLDOWN`, default 10s)
+  prevents channel spam during DDoS floods.
+- `on_block` callback on `NftablesBlocker`: `block()` calls
+  `self.on_block(ip, reason=..., source=..., timeout=...)` after the nftables
+  rule is created. Both the main pipeline and honeypot probe paths
+  automatically trigger a notification without duplicating code at each call
+  site.
+- `core/config.py` gained `notify_discord_webhook` (`LEON_NOTIFY_DISCORD_WEBHOOK`)
+  and `notify_cooldown` (`LEON_NOTIFY_COOLDOWN`).
+- `--set-webhook URL` CLI command writes the webhook to `core/leon.json`
+  (gitignored). `--show-notify` prints current settings.
+- Startup banner: `notifications: discord (cooldown 10s)` when enabled,
+  otherwise a hint pointing at `--set-webhook`.
+
+### Notification message format (brief, no emoji)
+```
+**IP BLOCKED:** 10.0.0.5
+Reason: SYN flood (500 SYNs, 0 responses)
+Source: rule | 2024-09-15 14:32:01
+```
+
+### Discord webhook setup (any distro — works under sudo)
+1. **Server Settings → Integrations → Webhooks → New Webhook**
+2. Pick the channel → copy the URL
+3. Save it once (writes `core/leon.json`, gitignored):
+   ```bash
+   .venv/bin/python -m prevention.run_ips --set-webhook <DISCORD_URL>
+   ```
+4. Start LEON as usual — notifications fire on every block event.
+
+### Errors found & solved (Mint / cross-distro)
+| # | Error | Where | Root cause | Solution |
+|---|-------|-------|------------|----------|
+| 1 | `notifications: disabled` after `export`ing the URL | `run_ips.sh` | `sudo` wipes env vars by default (`env_reset` in sudoers) — the root process never sees `LEON_NOTIFY_DISCORD_WEBHOOK` | Store the webhook in a **file** (`core/leon.json`); `sudo` can't strip a file |
+| 2 | `sudo -E` still shows "disabled" | sudoers | Mint/Ubuntu sudoers only preserves whitelisted vars; `LEON_NOTIFY_DISCORD_WEBHOOK` isn't allowed | Same file-based fix; `--set-webhook` writes it for you |
+| 3 | "but if it's gitignored, how does Mint get the URL?" | design | `.gitignore` stops the *secret* from being committed — Mint gets the code but not the secret | Mint runs the same one-time `--set-webhook` command; `core/leon.example.json` template documents the format |
+| 4 | `discord notification failed (IP): HTTP Error 403: Forbidden` even with a fresh webhook | `notify.py` | Discord's edge rejects urllib's default `User-Agent: Python-urllib/3.x`; curl (default UA) to the same webhook returned 204 | Added explicit `User-Agent: LEON-Discord-Notifier/1.0` header in `_post_discord`; test asserts the header is present |
+
+Key lesson: **env vars don't survive `sudo`; files do.** The webhook is a
+secret → gitignored → configured once per machine via `--set-webhook`.
+
+### Test results
+`prevention/test_notify.py` — ALL PASS:
+- Disabled notifier (no webhook) → silent no-op
+- Enabled notifier → POSTs correct JSON payload to webhook URL
+- `_message()` renders IP, reason, source, timestamp correctly
+- Rate limiting: second call within cooldown skipped
+- Cooldown reset: second call succeeds after cooldown elapses
+- HTTP 500 from Discord → logged, not raised
+- `NftablesBlocker.on_block` fires with reason + source on block()
+- `on_block` callback exception → caught and logged, block() still succeeds
+- Acceptance and sent counts correct
+- `save_webhook()` writes a file + `load_json()` picks it up (round-trip)
+- `save_webhook()` preserves existing config fields
+- `core/leon.json` is listed in `.gitignore`
+- POST carries `Content-Type: application/json` **and** a custom
+  `User-Agent: LEON-Discord-Notifier/1.0` (Discord 403s the default Python UA)
+
+Full prevention suite (`./test_prevention.sh`): ALL PASS — no regressions.
+
+### Files changed
+| File | Action |
+|------|--------|
+| `prevention/notify.py` | New — `BlockNotifier` + `save_webhook` |
+| `prevention/test_notify.py` | New — 12 offline tests |
+| `prevention/blocker.py` | Edit — `on_block` callback, `reason`/`source` params |
+| `prevention/run_ips.py` | Edit — wire notifier, `--set-webhook`, `--show-notify`, banner |
+| `core/config.py` | Edit — 2 new fields |
+| `core/leon.example.json` | New — committed template (placeholder URL) |
+| `.gitignore` | Edit — ignore `core/leon.json` (secret) |
+| `test_prevention.sh` | Edit — add test_notify |
+
+### Next step
+**Email notifications (Phase 2)** — same `BlockNotifier` class, adds an SMTP
+branch via `smtplib` (stdlib). Config env vars: `LEON_NOTIFY_EMAIL_SMTP_HOST`,
+`LEON_NOTIFY_EMAIL_SMTP_PORT`, `LEON_NOTIFY_EMAIL_SMTP_USER`,
+`LEON_NOTIFY_EMAIL_SMTP_PASS`, `LEON_NOTIFY_EMAIL_FROM`,
+`LEON_NOTIFY_EMAIL_TO`.
+
+---
+
 ## Learning log
 All user Q&A and network concepts taught during development are kept in
 `q.md` — updated after every question.

@@ -52,6 +52,12 @@ class Config:
         self.block_timeout: float = float(os.environ.get("LEON_BLOCK_TIMEOUT", "3600"))  # 0 = permanent
         self.blocks_file: str = os.environ.get("LEON_BLOCKS_FILE", "prevention/blocks.json")
 
+        # Block notifications
+        self.notify_discord_webhook: str | None = (
+            os.environ.get("LEON_NOTIFY_DISCORD_WEBHOOK") or None
+        )
+        self.notify_cooldown: float = float(os.environ.get("LEON_NOTIFY_COOLDOWN", "10"))
+
         # Dashboard
         self.dashboard_host: str = os.environ.get("LEON_DASHBOARD_HOST", "127.0.0.1")
         self.dashboard_port: int = int(os.environ.get("LEON_DASHBOARD_PORT", "8050"))
@@ -83,6 +89,8 @@ class Config:
             "prevent_mode": self.prevent_mode,
             "block_timeout": self.block_timeout,
             "blocks_file": self.blocks_file,
+            "notify_discord_webhook": self.notify_discord_webhook,
+            "notify_cooldown": self.notify_cooldown,
             "dashboard_host": self.dashboard_host,
             "dashboard_port": self.dashboard_port,
         }

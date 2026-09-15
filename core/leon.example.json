@@ -1,0 +1,4 @@
+{
+    "notify_discord_webhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL_HERE",
+    "notify_cooldown": 10
+}

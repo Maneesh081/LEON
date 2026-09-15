@@ -6,6 +6,8 @@ usage:
   sudo .venv/bin/python -m prevention.run_ips --live -i wlan0 -d 30 [--explain] [--prevent] [--honeypot]
   .venv/bin/python -m prevention.run_ips --list-blocks
   .venv/bin/python -m prevention.run_ips --unblock 1.2.3.4
+  .venv/bin/python -m prevention.run_ips --set-webhook <DISCORD_URL>
+  .venv/bin/python -m prevention.run_ips --show-notify
 
 Default is detect mode: every flow is classified and decided (ALLOW/ALERT/
 BLOCK) and logged, but no nftables rule is created. Add --prevent (or set
@@ -27,6 +29,7 @@ from sensor.flow import FlowTable
 from prevention.blocker import NftablesBlocker
 from prevention.decision import BLOCK, DecisionEngine
 from prevention.honeypot import Honeypot
+from prevention.notify import BlockNotifier, save_webhook
 
 
 def show(decision: Any, verdict: dict, flow: Any = None) -> None:
@@ -53,7 +56,7 @@ def handle_probe(ip: str, engine: Any, blocker: Any, enforce: bool, store: Event
                anomaly_score=0.0, flow={"honeypot": ip})
     print(f"[HONEYPOT] probe from {ip} -> {decision.action.upper()}: {decision.reason}")
     if decision.action == BLOCK and enforce:
-        blocker.block(ip)
+        blocker.block(ip, reason=decision.reason, source=decision.source)
 
 
 def run_live(cfg: Config, args: Any, clf: Any, engine: DecisionEngine,
@@ -77,7 +80,7 @@ def run_live(cfg: Config, args: Any, clf: Any, engine: DecisionEngine,
                    anomaly_score=verdict.get("anomaly_score"), flow=flow.to_dict(), features=feats)
         show(decision, verdict, flow)
         if decision.action == BLOCK and enforce:
-            blocker.block(decision.attacker_ip)
+            blocker.block(decision.attacker_ip, reason=decision.reason, source=decision.source)
 
     try:
         deadline = time.monotonic() + duration
@@ -117,10 +120,31 @@ def main() -> int:
     parser.add_argument("--honeypot", action="store_true", help="start the decoy honeypot listener")
     parser.add_argument("--list-blocks", action="store_true", help="show currently blocked IPs")
     parser.add_argument("--unblock", metavar="IP", help="remove a blocked IP")
+    parser.add_argument("--set-webhook", metavar="URL",
+                        help="save a Discord webhook URL to core/leon.json and exit (works under sudo)")
+    parser.add_argument("--show-notify", action="store_true",
+                        help="print current notification settings and exit")
     args = parser.parse_args()
 
     cfg = load_config()
-    blocker = NftablesBlocker(cfg)
+
+    if args.set_webhook:
+        saved = save_webhook(args.set_webhook)
+        print(f"saved Discord webhook to {saved}")
+        print("notifications will be enabled on the next run (file is gitignored)")
+        return 0
+
+    notifier = BlockNotifier(cfg)
+    blocker = NftablesBlocker(cfg, on_block=notifier.send_block_notification)
+
+    if args.show_notify:
+        channels = notifier.active_channels()
+        webhook = "(not set)" if not notifier.webhook else f"{notifier.webhook[:44]}…"
+        print(f"webhook: {webhook}")
+        print(f"cooldown: {cfg.notify_cooldown}s")
+        print(f"source:   core/leon.json (gitignored) or LEON_NOTIFY_DISCORD_WEBHOOK env var")
+        print(f"notifications: {'disabled' if not channels else 'enabled - ' + ' + '.join(channels)}")
+        return 0
 
     if args.list_blocks:
         for ip in blocker.list_blocked():
@@ -145,6 +169,12 @@ def main() -> int:
             print(f"prevent mode: nftables active, {restored} persisted blocks restored")
         else:
             print("detect mode: decisions logged, blocking disabled (use --prevent)")
+        channels = notifier.active_channels()
+        if channels:
+            print(f"notifications: {' + '.join(channels)} (cooldown {cfg.notify_cooldown}s)")
+        else:
+            print("notifications: disabled - run '.venv/bin/python -m prevention.run_ips "
+                  "--set-webhook <DISCORD_URL>' or see README")
         clf = FlowClassifier()
         explainer = FlowExplainer(clf.classifier)
 

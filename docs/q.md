@@ -516,4 +516,135 @@ Or via LEON: `sudo .venv/bin/python -m prevention.run_ips --list-blocks`
   is sufficient for the demo. Retraining is a longer-term improvement.
 
 ---
-*Last updated: Rule-based SYN flood detection added and verified on loopback. 49 tests pass. Docs updated for Linux Mint compatibility.*
+
+## Block notifications
+
+### Q: How do Discord webhook notifications work? Do I need to create a bot?
+- **No bot needed.** Discord webhooks are much simpler than bots — they are
+  just "incoming mailboxes" for a channel.
+- Setup: **Server Settings → Integrations → Webhooks → New Webhook** → pick
+  the channel → copy the URL.
+- The URL looks like:
+  `https://discord.com/api/webhooks/1234567890/AbCdEfGhIjKlMn...`
+- Set it as an env var:
+  `export LEON_NOTIFY_DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."`
+- When LEON blocks an IP, it POSTs a JSON payload to that URL:
+  `{"content": "**IP BLOCKED:** 10.0.0.5\nReason: SYN flood..."}`
+- Discord displays it as a message in the chosen channel — as if a user typed
+  it. No bot token, no bot hosting, no Discord developer portal.
+- Locking a webhook URL to a channel is free (1 per channel), and webhooks can
+  be revoked at any time.
+
+### Q: Where do I put the Discord webhook URL?
+- The easiest way — one command, no file editing:
+  ```bash
+  .venv/bin/python -m prevention.run_ips --set-webhook https://discord.com/api/webhooks/...
+  ```
+  This writes the URL into `core/leon.json` (auto-created, **gitignored**).
+- To check it worked: `.venv/bin/python -m prevention.run_ips --show-notify`
+  → `notifications: enabled - discord`
+- The old env-var way (`export LEON_NOTIFY_DISCORD_WEBHOOK=...`) still works,
+  but it does NOT survive `sudo` — see the next question.
+
+### Q: My notification says "disabled" even after I exported the URL — why?
+- **`sudo` wipes your environment variables by default** (`env_reset` is set
+  in the sudoers file for security). `run_ips.sh` runs the pipeline as root,
+  which never sees the `export`ed variable → `notifications: disabled`.
+- The same problem affects **Linux Mint** (Ubuntu-based, same sudoers behavior).
+- **Fix:** store the URL in a *file* (`core/leon.json`). `sudo` can't strip a
+  file from disk, so it works on every distro:
+  ```bash
+  .venv/bin/python -m prevention.run_ips --set-webhook <URL>
+  sudo ./run_ips.sh --live -d 60 --prevent --honeypot
+  ```
+- `sudo -E` (preserve env) also failed because sudoers only allows specific
+  variables through — `LEON_NOTIFY_DISCORD_WEBHOOK` isn't on the whitelist.
+
+### Q: How does Linux Mint (or any other machine) get the webhook if `core/leon.json` is gitignored?
+- `.gitignore` only controls **what gets committed to the git repo**. The
+  webhook URL is a *secret*, so it deliberately stays out of git.
+- When you `clone`/`pull` on Mint, the LEON *code* (including `--set-webhook`)
+  comes with the repo, but `core/leon.json` does **not**.
+- So on Mint you just run the **same one-time command**:
+  `mkdir -p core && .venv/bin/python -m prevention.run_ips --set-webhook <URL>`
+  → the file is created there, too. Every machine needs its own `core/leon.json`,
+  configured once — that's normal and expected for a secret.
+- A committed template (`core/leon.example.json`) shows the file format when you
+  clone the repo fresh.
+
+### Q: How do I test the Discord notification?
+- **Offline unit tests** (no root, no network, no real Discord):
+  `./test_prevention.sh` — mocks urllib, verifies payload content, rate
+  limiting, disabled state, the on_block callback integration, plus
+  `--set-webhook` writing/loading and the `.gitignore` entry.
+- **Live test** (needs a real Discord webhook, ~2 min):
+  1. Create a webhook in your Discord server, copy the URL.
+  2. `.venv/bin/python -m prevention.run_ips --set-webhook <URL>`
+  3. `sudo ./run_ips.sh --live -i lo -d 60 --prevent --honeypot`
+     → you should see `notifications: discord (cooldown 10s)`.
+  4. In a second terminal: `nc <your-ip> 2323` (honeypot probe) or run
+     `scripts/ddos_flood.py`.
+  5. Check the Discord channel — the notification should appear immediately.
+- **Rate-limit check**: trigger two blocks within 10 seconds → only one
+  notification. Wait 10s → the next block sends a new notification.
+- Notifications are **on by default** — they activate when a webhook is
+  configured, and silently do nothing when it isn't.
+
+### Q: I get `discord notification failed (...): HTTP Error 403: Forbidden` even with a fresh webhook
+- The URL and Discord are fine — the **request** is what Discord's edge
+  rejects. Python's `urllib` sends `User-Agent: Python-urllib/3.x` by default,
+  which Discord/Cloudflare blocks with 403. A plain `curl -X POST` to the same
+  webhook succeeds (204), which is how we isolated it.
+- **Fix (already in the code):** the notifier now sends
+  `User-Agent: LEON-Discord-Notifier/1.0`. If you still see 403, sanity-check
+  with curl: `curl -sS -o /dev/null -w "%{http_code}\n" -X POST
+  -H "Content-Type: application/json" -d '{"content":"test"}'
+  <WEBHOOK_URL>` → 204 means Discord OK; a 403 on curl too means your
+  network/VPN/region is blocking Discord, not LEON.
+- On the 403 run you also saw `blocked 10.123.137.91` and the honeypot BLOCK —
+  that confirmed blocking itself works; only the delivery was failing.
+
+### Q: What does the Discord notification look like?
+- A brief, plain (no-emoji) message with three lines:
+  ```
+  **IP BLOCKED:** 10.0.0.5
+  Reason: SYN flood (500 SYNs, 0 responses)
+  Source: rule | 2024-09-15 14:32:01
+  ```
+- The `Reason` and `Source` lines come from the `DecisionEngine` — the same
+  reason shown in the terminal output and in the dashboard's verdict feed.
+
+### Q: How will email notifications work? (Phase 2, planned)
+- Will use `smtplib` (Python stdlib) — no extra dependencies.
+- Gmail: requires an **App Password** (not your regular password) — generate
+  one at myaccount.google.com → Security → App passwords.
+- Config env vars:
+  `LEON_NOTIFY_EMAIL_SMTP_HOST`, `LEON_NOTIFY_EMAIL_SMTP_PORT`,
+  `LEON_NOTIFY_EMAIL_SMTP_USER`, `LEON_NOTIFY_EMAIL_SMTP_PASS`,
+  `LEON_NOTIFY_EMAIL_FROM`, `LEON_NOTIFY_EMAIL_TO`.
+- Works with Gmail (`smtp.gmail.com:587`), Outlook (`smtp.office365.com`),
+  Yahoo, or any SMTP server.
+- Both Discord and email can be enabled independently or together. Neither is
+  required — LEON works silently without either.
+
+### Q: What happens if the Discord webhook URL is invalid or the server is down?
+- The error is caught and logged (`discord notification failed: ...`), never
+  raised — the main pipeline continues running without interruption.
+- The failed notification's count is decremented, and the cooldown resets so
+  the next block will retry.
+
+### Q: What about notifications during a DDoS flood? Won't that spam my channel?
+- Rate limiting prevents spam: a cooldown (default 10 seconds,
+  `LEON_NOTIFY_COOLDOWN`) is enforced between notifications. During a flood
+  with hundreds of blocked flows, at most one Discord message is sent per
+  cooldown window.
+- The cooldown is configurable: `export LEON_NOTIFY_COOLDOWN=30` for 30
+  seconds, or `=0` for no cooldown.
+
+### Q: Does the notification fire when LEON starts up and restores persisted blocks?
+- Yes. On startup, if `prevention/blocks.json` has unexpired blocks,
+  `restore()` re-applies them to nftables and fires the notification callback.
+  This tells you the block is active again (e.g. after a reboot or restart).
+
+---
+*Last updated: fixed Discord 403 — notifier now sends a custom User-Agent (Discord rejects urllib's default). Branch: feature/block-notifications.*
