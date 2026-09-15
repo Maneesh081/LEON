@@ -204,13 +204,3 @@ pre-trained `best_model.joblib` is committed to the repo.
 | `LEON_NOTIFY_COOLDOWN` | `10` | min seconds between notifications (0 = no limit) |
 | `LEON_DASHBOARD_PORT` | `8050` | dashboard HTTP port |
 
-## Docs & learning log
-
-All in the `docs/` folder:
-
-- `docs/model_explained.md` — how the ML + SHAP layers work in plain English.
-- `docs/ips_and_dashboard_explained.md` — L6 decision engine, L7 nftables + honeypot, dashboard walkthrough.
-- `docs/plan.md` — original build plan per layer.
-- `docs/discord_webhooks.md` — the Discord block-notification guide (setup, testing, troubleshooting).
-- `docs/PROGRESS.md` — build log per layer.
-- `docs/q.md` — every Q&A from development (network concepts, Linux, LEON layers, dashboard design).
