@@ -609,15 +609,3 @@ Full prevention suite (`./test_prevention.sh`): ALL PASS — no regressions.
 | `.gitignore` | Edit — ignore `core/leon.json` (secret) |
 | `test_prevention.sh` | Edit — add test_notify |
 
-### Next step
-**Email notifications (Phase 2)** — same `BlockNotifier` class, adds an SMTP
-branch via `smtplib` (stdlib). Config env vars: `LEON_NOTIFY_EMAIL_SMTP_HOST`,
-`LEON_NOTIFY_EMAIL_SMTP_PORT`, `LEON_NOTIFY_EMAIL_SMTP_USER`,
-`LEON_NOTIFY_EMAIL_SMTP_PASS`, `LEON_NOTIFY_EMAIL_FROM`,
-`LEON_NOTIFY_EMAIL_TO`.
-
----
-
-## Learning log
-All user Q&A and network concepts taught during development are kept in
-`q.md` — updated after every question.
